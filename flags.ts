@@ -1,5 +1,5 @@
 import { promises as dns } from 'dns';
-import { createDecipheriv } from 'crypto';
+import { createDecipheriv, createHash } from 'crypto';
 
 // --- Caching Configuration
 const DEFAULT_CACHE_TTL_MS = 60 * 1000; // Cache results for 60 seconds by default.
@@ -30,46 +30,63 @@ function decrypt(encryptedText: string, secret: string): string {
   return decrypted.toString('utf-8');
 }
 
+function _getUserRolloutValue(featureName: string, userId: string): number {
+    const hash = createHash('sha256');
+    hash.update(featureName + userId);
+    const digest = hash.digest();
+    const value = digest.readUInt32BE(0);
+    return (value % 100) + 1;
+}
+
 /**
  * Checks if a feature flag is enabled by querying and decrypting a DNS TXT record.
  * @param featureName The name of the feature flag.
  * @param baseDomain Your application's base domain for flags.
+ * @param userId The user to evaluate
  * @returns {Promise<boolean>} A promise that resolves to true if the flag is 'on', otherwise false.
  */
-export async function isFlagEnabled(featureName: string, baseDomain: string): Promise<boolean> {
-  const domain = `${featureName}.${baseDomain}`;
-  // 1. Check the cache first
-  const cachedEntry = flagCache.get(domain);
-  if (cachedEntry && Date.now() < cachedEntry.expires) {
-    return cachedEntry.value
-  }
-  
-  const secret = process.env.RIPPLE_SECRET;
+export async function isFlagEnabled(featureName: string, baseDomain: string, userId?: string): Promise<boolean> {
+    const domain = `${featureName}.${baseDomain}`;
+    let flagRule = '';
 
-  if (!secret || secret.length !== 64) {
-    console.error('RIPPLE_SECRET environment variable is not set or is not a 64-character hex string.');
-    return false;
-  }
-  
-  try {
-    const records = await dns.resolveTxt(domain);
-    const encryptedValue = records.flat().join('');
+    const cachedEntry = flagCache.get(domain);
+    if (cachedEntry && Date.now() < cachedEntry.expires) {
+        flagRule = cachedEntry.value;
+    } else {
+        const secret = process.env.GHOSTFLAGS_SECRET;
+        if (!secret) { return false; }
+        try {
+            const records = await dns.resolveTxt(domain);
+            const encryptedValue = records.flat().join('');
+            if (!encryptedValue) throw new Error("Empty TXT record");
 
-    if (!encryptedValue) {
-      throw new Error('Empty TXT record');
+            const decryptedFlags = decrypt(encryptedValue, secret);
+            flagRule = new URLSearchParams(decryptedFlags.replace(/;/g, '&')).get(featureName) || 'off';
+
+            flagCache.set(domain, { value: flagRule, expires: Date.now() + DEFAULT_CACHE_TTL_MS });
+        } catch (error) {
+            flagCache.set(domain, { value: 'off', expires: Date.now() + FAILURE_CACHE_TTL_MS });
+            return false;
+        }
     }
-    
-    const decryptedFlags = decrypt(encryptedValue, secret);
-  
-    const flagValue = new URLSearchParams(decryptedFlags.replace(/;/g, '&')).get(featureName);
 
-    const isEnabled = flagValue === 'on';
-    // 2. On success, cache the result
-    flagCache.set(domain, { value: isEnabled, expires: Date.now() + DEFAULT_CACHE_TTL_MS });
-    return isEnabled;
-  } catch (error) {
-    // 3. On failure, cache a 'false' result for a shorter duration
-    flagCache.set(domain, { value: false, expires: Date.now() + FAILURE_CACHE_TTL_MS });
-    return false;
-  }
+    if (flagRule === 'on') {
+        return true;
+    }
+
+    if (flagRule.startsWith('rollout=')) {
+        const percentage = parseInt(flagRule.split('=')[1], 10);
+        if (isNaN(percentage)) return false;
+
+        // A 100% rollout is effectively the same as "on"
+        if (percentage >= 100) return true;
+        
+        // For partial rollouts, a userId is required
+        if (!userId) return false;
+
+        const userValue = _getUserRolloutValue(featureName, userId);
+        return userValue <= percentage;
+    }
+
+    return false; // Default to 'off' for any other value
 }
