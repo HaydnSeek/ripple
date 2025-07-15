@@ -145,11 +145,26 @@ const encrypted = encrypt(plaintext, secret);
 console.log(`Your encrypted TXT record value is:\n${encrypted}`);
 ```
 ##### Run the script to get your value:
+To turn a feature **fully on**
 ```bash
+# These are equivalent
+node encrypt-flag.js new-header
 node encrypt-flag.js new-header on
 # Example output:
 # Your encrypted TXT record value is:
 # zxR...<some long base64 string>...3D
+```
+To set a **percentage-based rollout**:
+```bash
+node encrypt-flag.js new-checkout 25
+# This creates a rule for a 25% rollout
+# Example output:
+# Your encrypted TXT record value is:
+# zxR...<some long base64 string>...3D
+```
+To turn a feature **fully off**:
+```bash
+node encrypt-flag.js new-header off
 ```
 Now, go to your DNS provider and create the record:
 
@@ -164,29 +179,37 @@ Now you can use the function in any Server Component to conditionally render UI.
 ```typescript
 // app/page.tsx
 import { isFlagEnabled } from '@/lib/flags';
+import { cookies } from 'next/headers';
 
 export default async function HomePage() {
   const flagDomain = 'flags.yourdomain.com';
+  const sessionId = cookies().get('session-id')?.value;
+
+  // Example 1: Simple on/off flag (userId not needed)
   const showNewHeader = await isFlagEnabled('new-header', flagDomain);
+
+  // Example 2: Percentage-based rollout (userId is required)
+  const useNewCheckout = await isFlagEnabled(
+    'new-checkout',
+    flagDomain,
+    sessionId
+  );
 
   return (
     <main>
-      {showNewHeader ? (
-        <header><h1>✨ The New Header! ✨</h1></header>
-      ) : (
-        <header><h1>The Old Header</h1></header>
-      )}
-      <p>Welcome to the site.</p>
+      {showNewHeader && <header><h1>✨ The New Header! ✨</h1></header>}
+      {useNewCheckout ? <p>Using new checkout!</p> : <p>Using old checkout.</p>}
     </main>
   );
 }
+
 ```
 ***
 ### Important Considerations
 
 Ripple is powerful but has trade-offs you should understand.
 - **DNS Propogation Delay**: Changes to DNS records are **not instant**. They are subject to the record's TTL (Time-To-Live). A 60-second TTL means it can take at least a minute for changes to be reflected globally. This makes Ripple unsuitable for flags that need to be disabled instantly in an emergency.
-- **No Advanced Targeting**: Ripple is for simple, global, boolean on/off switches. It does not support percentage-based rollouts, user attribute targeting, or complex rules.
+- **No Advanced Targeting**: Ripple is for simple, global, boolean/rollout switches. It does not support complex user attribute targeting.
 
 ***
 
