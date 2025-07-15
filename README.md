@@ -1,8 +1,8 @@
 # Ripple
 
-> Ripple is a simple, open-source feature flagging tool that leverages global DNS infrastructure to deliver configurations via TXT records for ultra-fast, serverless evaluations.
+> GhostFlags is a simple, open-source feature flagging tool that securely delivers a centralized JSON configuration via a single, encrypted DNS TXT record for ultra-fast, serverless evaluations.
 
-It delivers feature flags with **sub-10ms latency** and **zero infrastructure** by reading encrypted configurations from your existing DNS provider.
+It delivers feature flags with **sub-10ms latency** and **zero infrastructure** by reading a single, encrypted configuration from your existing DNS provider.
 
 ***
 
@@ -13,17 +13,19 @@ Traditional feature flag systems require you to manage a separate service, which
 - 🚀 **Blazing Fast**: Leverages the global DNS network, one of the fastest and most resilient distributed systems in the world.
 - 0️⃣ **Zero Infrastructure**: No servers to manage, no databases to scale. Your DNS provider does all the work.
 - 🔒 **Secure by Default**: Flag configurations are encrypted using AES-256, so your upcoming features and internal settings remain private.
-- 🌐 **Globally Distributed**: inherently global, providing low-latency responses to users anywhere.
+- 🌐 **Globally Distributed**: Inherently global, providing low-latency responses to users anywhere.
+- ✔️ **Simple & Efficient**: Manage all your flags in one JSON file. Fetch them all with a single DNS query.
 
 ***
 
 ### How It Works
 
-Ripple turns your public DNS records into a secure messaging channel for your application's configuration.
-1. A feature flag configuration (e.g., `new-header=on`) is **encrypted** using a shared secret key.
-2. The resulting ciphertext is published as a **TXT record** in your DNS. Observers can only see the encrypted value.
-3. Your server fetches the encrypted record and **decrypts** it using the same shared secret.
-4. Your application can then securely read the flag status.
+Ripple turns a single DNS record into a secure, global source of truth for your application's configuration.
+1. Your entire feature flag configuration is stored in a **single JSON file**.
+2. This JSON file is **encrypted** into a single string using a shared secret key.
+3. The resulting ciphertext is published to a single **TXT record** (e.g. `ripple.flags.yourdomain.com`)
+4. Your server fetches this one record, decrypts it, and caches the resulting configuration object.
+5. All subsequent flag checks are near-instant, reading from the in-memory cache.
 
 This is especially powerful in server-side implementations like **Next.js Server Components**, where the check happens on the server with no impact on your client-side bundle size.
 
@@ -33,7 +35,7 @@ This is especially powerful in server-side implementations like **Next.js Server
 
 #### 1. Set Your Secret Key
 
-You need a 32-byte (64-character hexadecimal) secret key. This key must be available as an environment variable (`RIPPLE_SECRET`) to your application and wherever you generate the encrypted flag values.
+You need a 32-byte (64-character hexadecimal) secret key. This key must be available as an environment variable (`RIPPLE_SECRET`).
 
 ##### Generate a key:
 ```bash
@@ -47,10 +49,23 @@ Add this key to your project's `.env.local` file. **Never commit this file to ve
 RIPPLE_SECRET=9a7d3a7e4e3b1d7d2a6c8b0e0f8c2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f
 ```
 
-#### 2. Create the Utility File
+#### 2. Create Your Flag Configuration File
 
-Create a new file at `lib/flags.ts` in your Next.js project and add the following code:
+Create a JSON file in your project to define all your flags:
 
+##### flags.json
+```json
+{
+  "new-header": "on",
+  "beta-checkout": "rollout=25",
+  "promo-banner": "off",
+  "experimental-api": "rollout=5"
+}
+```
+
+#### 3. Generate & Set Your Encrypted DNS Record
+
+Use the `encrypt.config.js` helper script to encrypt your `flags.json` file.
 ```typescript
 import { promises as dns } from 'dns';
 import { createDecipheriv } from 'crypto';
