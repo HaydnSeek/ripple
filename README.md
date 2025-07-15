@@ -2,7 +2,7 @@
 
 > Ripple is a simple, open-source feature flagging tool that leverages global DNS infrastructure to deliver configurations via TXT records for ultra-fast, serverless evaluations.
 
-It delivers feature flags with **sub-10ms latency** and **zero infrastructure** by reading simple configurations from your existing DNS provider.
+It delivers feature flags with **sub-10ms latency** and **zero infrastructure** by reading encrypted configurations from your existing DNS provider.
 
 ***
 
@@ -12,18 +12,18 @@ Traditional feature flag systems require you to manage a separate service, which
 
 - 🚀 **Blazing Fast**: Leverages the global DNS network, one of the fastest and most resilient distributed systems in the world.
 - 0️⃣ **Zero Infrastructure**: No servers to manage, no databases to scale. Your DNS provider does all the work.
-- 💀 **Dead Simple**: The core idea is a single function that checks a DNS record. That's it.
+- 🔒 **Secure by Default**: Flag configurations are encrypted using AES-256, so your upcoming features and internal settings remain private.
 - 🌐 **Globally Distributed**: inherently global, providing low-latency responses to users anywhere.
 
 ***
 
 ### How It Works
 
-The magic is in its simplicty.
-1. You create a **TXT record** on a domain you control (e.g., `new-feature.flags.yourdomain.com`).
-2. You set the value of that record to "on".
-3. In your app, Ripple performs a DNS lookup for that specific record.
-4. If the record exists and its value is "on", the feature is enabled. Otherwise, it's off.
+Ripple turns your public DNS records into a secure messaging channel for your application's configuration.
+1. A feature flag configuration (e.g., `new-header=on`) is **encrypted** using a shared secret key.
+2. The resulting ciphertext is published as a **TXT record** in your DNS. Observers can only see the encrypted value.
+3. Your server fetches the encrypted record and **decrypts** it using the same shared secret.
+4. Your application can then securely read the flag status.
 
 This is especially powerful in server-side implementations like **Next.js Server Components**, where the check happens on the server with no impact on your client-side bundle size.
 
@@ -31,9 +31,23 @@ This is especially powerful in server-side implementations like **Next.js Server
 
 ### Getting Started
 
-Ripple is designed to be dropped directly into your project.
+#### 1. Set Your Secret Key
 
-#### 1. Create the Utility File
+You need a 32-byte (64-character hexadecimal) secret key. This key must be available as an environment variable (`RIPPLE_SECRET`) to your application and wherever you generate the encrypted flag values.
+
+##### Generate a key:
+```bash
+openssl rand -hex 32
+# Example output: 9a7d3a7e4e3b1d7d2a6c8b0e0f8c2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f
+```
+Add this key to your project's `.env.local` file. **Never commit this file to version control**.
+
+##### .env.local
+```bash
+RIPPLE_SECRET=9a7d3a7e4e3b1d7d2a6c8b0e0f8c2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f
+```
+
+#### 2. Create the Utility File
 
 Create a new file at `lib/flags.ts` in your Next.js project and add the following code:
 
@@ -94,12 +108,54 @@ export async function isFlagEnabled(featureName: string, baseDomain: string): Pr
   }
 }
 ```
-#### Set Up Your DNS Record
+#### 3. Generate & Set Your Encrypted DNS Record
 
-In your DNS provider (Cloudflare, Vercel, GoDaddy, etc.), create a **TXT record**
+Because the value is encrypted, you can't just type "on" into your DNS provider's dashboard. Use a helper script to generate the correct value.
+
+Create a script `encrypt-flag.js` in your project's root:
+```javascript
+// encrypt-flag.js
+const { createCipheriv, randomBytes } = require('crypto');
+require('dotenv').config({ path: '.env.local' }); // Load .env.local
+
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 16;
+
+function encrypt(plaintext, secret) {
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, Buffer.from(secret, 'hex'), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf-8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, ciphertext, authTag]).toString('base64');
+}
+
+const featureName = process.argv[2];
+const featureState = process.argv[3] || 'on';
+const secret = process.env.RIPPLE_SECRET;
+
+if (!featureName || !secret) {
+  console.error('Usage: node encrypt-flag.js <feature-name> [on|off]');
+  console.error('Ensure RIPPLE_SECRET is set in .env.local');
+  process.exit(1);
+}
+
+const plaintext = `${featureName}=${featureState}`;
+const encrypted = encrypt(plaintext, secret);
+
+console.log(`Your encrypted TXT record value is:\n${encrypted}`);
+```
+##### Run the script to get your value:
+```bash
+node encrypt-flag.js new-header on
+# Example output:
+# Your encrypted TXT record value is:
+# zxR...<some long base64 string>...3D
+```
+Now, go to your DNS provider and create the record:
+
 - **Type**: `TXT`
 - **Name/Host**: `new-header.flags.yourdomain.com`
-- **Value**: `"on"`
+- **Value**: Paste the full encrypted string from the script output
 - **TTL**: `60` (a low TTL like 60 seconds is recommended for faster updates)
 
 #### Use It in Your App
@@ -130,7 +186,6 @@ export default async function HomePage() {
 
 Ripple is powerful but has trade-offs you should understand.
 - **DNS Propogation Delay**: Changes to DNS records are **not instant**. They are subject to the record's TTL (Time-To-Live). A 60-second TTL means it can take at least a minute for changes to be reflected globally. This makes Ripple unsuitable for flags that need to be disabled instantly in an emergency.
-- **Public Visibility**: DNS records are public. Anyone can look them up. **Do not** store sensitive information in your flag names or values.
 - **No Advanced Targeting**: Ripple is for simple, global, boolean on/off switches. It does not support percentage-based rollouts, user attribute targeting, or complex rules.
 
 ***
