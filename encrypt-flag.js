@@ -20,7 +20,7 @@ if (!featureName || !secret) {
   console.error('Usage: node encrypt-flag.js <feature-name> [on|off|<percentage>]');
   console.error('Example (On): node encrypt-flag.js new-feature on');
   console.error('Example (Rollout): node encrypt-flag.js new-feature 50');
-  console.error('\nEnsure GHOSTFLAGS_SECRET is set in .env.local');
+  console.error('\nEnsure RIPPLE_SECRET is set in .env.local');
   process.exit(1);
 }
 
