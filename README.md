@@ -1,5 +1,5 @@
 <p align="center">
-  <image width="600px" src="ripple-logo.png"/>
+  <image width="100%" src="ripple-logo.png"/>
 </p>
 
 > Ripple is a simple, open-source feature flagging tool that securely delivers a centralized JSON configuration via a single, encrypted DNS TXT record for ultra-fast, serverless evaluations.
