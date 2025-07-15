@@ -1,6 +1,12 @@
 import { promises as dns } from 'dns';
 import { createDecipheriv } from 'crypto';
 
+// --- Caching Configuration
+const DEFAULT_CACHE_TTL_MS = 60 * 1000; // Cache results for 60 seconds by default.
+const FAILURE_CACHE_TTL_MS = 60 * 1000; // Cache failures for 10 seconds.
+const flagCache = new Map<string, { value: boolean; expires: number }>();
+
+// --- Cryptography Configuration
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16; // 16 bytes for AES-GCM
 const AUTH_TAG_LENGTH = 16; // 16 bytes for AES-GCM
@@ -32,6 +38,12 @@ function decrypt(encryptedText: string, secret: string): string {
  */
 export async function isFlagEnabled(featureName: string, baseDomain: string): Promise<boolean> {
   const domain = `${featureName}.${baseDomain}`;
+  // 1. Check the cache first
+  const cachedEntry = flagCache.get(domain);
+  if (cachedEntry && Date.now() < cachedEntry.expires) {
+    return cachedEntry.value
+  }
+  
   const secret = process.env.RIPPLE_SECRET;
 
   if (!secret || secret.length !== 64) {
@@ -42,14 +54,22 @@ export async function isFlagEnabled(featureName: string, baseDomain: string): Pr
   try {
     const records = await dns.resolveTxt(domain);
     const encryptedValue = records.flat().join('');
+
+    if (!encryptedValue) {
+      throw new Error('Empty TXT record');
+    }
     
     const decryptedFlags = decrypt(encryptedValue, secret);
-    
-    // Simple parsing logic for "key=value"
+  
     const flagValue = new URLSearchParams(decryptedFlags.replace(/;/g, '&')).get(featureName);
 
-    return flagValue === 'on';
+    const isEnabled = flagValue === 'on';
+    // 2. On success, cache the result
+    flagCache.set(domain, { value: isEnabled, expires: Date.now() + DEFAULT_CACHE_TTL_MS });
+    return isEnabled;
   } catch (error) {
+    // 3. On failure, cache a 'false' result for a shorter duration
+    flagCache.set(domain, { value: false, expires: Date.now() + FAILURE_CACHE_TTL_MS });
     return false;
   }
 }
